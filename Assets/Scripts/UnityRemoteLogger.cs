@@ -41,6 +41,7 @@ public class UnityRemoteLogger : MonoBehaviour
     private CSharpCodeProvider codeProvider;
     private Dictionary<string, Assembly> compiledAssemblies = new Dictionary<string, Assembly>();
 
+#if !RELEASE
     void Awake()
     {
         codeProvider = new CSharpCodeProvider();
@@ -434,42 +435,132 @@ public class UnityRemoteLogger : MonoBehaviour
 
         // 添加程序集引用
         var loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-        var requiredAssemblies = loadedAssemblies
-            .Where(a => !a.IsDynamic)
-            .Where(a => 
-                a.GetName().Name.StartsWith("UnityEngine") ||
-                a.GetName().Name.StartsWith("System") ||
-                a.GetName().Name == "mscorlib" ||
-                a.GetName().Name.StartsWith("netstandard")
-            )
-            .Select(a => a.Location)
-            .Where(loc => !string.IsNullOrEmpty(loc));
+        
+        // 定义需要包含的程序集前缀列表
+        var includedPrefixes = new[]
+        {
+            "UnityEngine",           // Unity引擎核心
+            "Unity.",               // Unity其他模块
+            "System",              // .NET核心类库
+            "mscorlib",           // .NET核心类库
+            "netstandard",        // .NET标准库
+            "Microsoft.",         // 微软扩展库
+            "DOTween",           // DOTween动画库
+            "TextMeshPro",       // TextMeshPro文本渲染
+            "Cinemachine",       // Cinemachine相机系统
+            "UnityEngine.UI",    // Unity UI系统
+            "UnityEngine.EventSystems",  // UI事件系统
+            "UnityEngine.Networking",    // 网络功能
+            "UnityEngine.Analytics",     // 分析功能
+            "UnityEngine.Advertisements", // 广告功能
+            "UnityEngine.Purchasing",    // 内购功能
+            "UnityEngine.SpatialTracking", // VR/AR追踪
+            "UnityEngine.XR",           // XR功能
+            "UnityEngine.Timeline",     // 时间轴功能
+            "UnityEngine.InputSystem",  // 新输入系统
+            "Assembly-CSharp",         // 项目主程序集
+            "Assembly-CSharp-firstpass" // 项目插件程序集
+        };
 
-        options.ReferencedAssemblies.AddRange(requiredAssemblies.ToArray());
+        // 用于记录已添加的程序集，避免重复
+        var addedAssemblies = new HashSet<string>();
+
+        foreach (var assembly in loadedAssemblies)
+        {
+            try
+            {
+                // 跳过动态程序集
+                if (assembly.IsDynamic || string.IsNullOrEmpty(assembly.Location))
+                    continue;
+
+                // 检查程序集名称是否在包含列表中
+                bool shouldInclude = includedPrefixes.Any(prefix => 
+                    assembly.GetName().Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+                if (shouldInclude && !addedAssemblies.Contains(assembly.Location))
+                {
+                    try
+                    {
+                        // 尝试添加程序集引用
+                        options.ReferencedAssemblies.Add(assembly.Location);
+                        addedAssemblies.Add(assembly.Location);
+                        // Debug.Log($"Added assembly reference: {assembly.GetName().Name}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"Failed to add assembly {assembly.GetName().Name}: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Error processing assembly: {ex.Message}");
+                continue;
+            }
+        }
+
+        // 添加常用的系统程序集（以防某些程序集未被自动加载）
+        var commonSystemAssemblies = new[]
+        {
+            "System.dll",
+            "System.Core.dll",
+            "System.Data.dll",
+            "System.Drawing.dll",
+            "System.IO.dll",
+            "System.Xml.dll",
+            "System.Numerics.dll",
+            "System.Runtime.dll",
+            "System.Collections.dll"
+        };
+
+        foreach (var assemblyName in commonSystemAssemblies)
+        {
+            try
+            {
+                var assemblyPath = Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location), assemblyName);
+                if (File.Exists(assemblyPath) && !addedAssemblies.Contains(assemblyPath))
+                {
+                    options.ReferencedAssemblies.Add(assemblyPath);
+                    addedAssemblies.Add(assemblyPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to add system assembly {assemblyName}: {ex.Message}");
+            }
+        }
 
         string wrappedCode = @"
-using UnityEngine;
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
-using UnityEngine.SceneManagement;
+    using UnityEngine;
+    using System;
+    using System.Collections;
+    using System.Collections.Generic;
+    using System.Linq;
+    using UnityEngine.SceneManagement;
+    using UnityEngine.UI;
+    using TMPro;
+    using UnityEngine.Events;
+    using System.Threading.Tasks;
+    using System.IO;
+    using System.Text;
+    using UnityEngine.Networking;
+    using UnityEngine.EventSystems;
 
-public class RuntimeScript
-{
-    public static object Execute(Dictionary<string, object> context)
+    public class RuntimeScript
     {
-        try
+        public static object Execute(Dictionary<string, object> context)
         {
-            " + code + @"
+            try
+            {
+                " + code + @"
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($""Runtime error: {e.Message}\n{e.StackTrace}"");
+                return null;
+            }
         }
-        catch (Exception e)
-        {
-            Debug.LogError($""Runtime error: {e.Message}"");
-            return null;
-        }
-    }
-}";
+    }";
 
         CompilerResults results = codeProvider.CompileAssemblyFromSource(options, wrappedCode);
 
@@ -516,6 +607,7 @@ public class RuntimeScript
         }
     }
 
+#endif
     private class CommandData
     {
         public string type { get; set; }
