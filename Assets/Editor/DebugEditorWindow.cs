@@ -323,7 +323,9 @@ return sb.ToString();"
         isExecuting = true;
         try
         {
+#if !RELEASE
             UnityRemoteLogger.ExecuteCodeLocally(codeToExecute);
+#endif
         }
         finally
         {
